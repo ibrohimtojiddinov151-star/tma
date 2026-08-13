@@ -44,11 +44,24 @@ export const T = {
   genericError: 'Something went wrong. Please try again.',
 
   planIntro:
+    '*New schedule*\n\n' +
+    'Two ways to build one:\n\n' +
+    '✨ *AI* - I draft the day from your profile, exam dates and the last 7 days.\n' +
+    '📄 *JSON* - you send the exact day you want, block by block.\n\n' +
+    'Either way I save it and set reminders for every block.',
+
+  planIntroJsonOnly:
     '*Upload a schedule*\n\n' +
     'Send me a `.json` file with your day and I will save it, then send reminders ' +
     'before, at the start of, and after every block.\n\n' +
     'You can also paste the JSON straight into the chat.\n\n' +
     'A template is on its way.',
+
+  quotaHint:
+    'The model your key has access to is out of quota.\n\n' +
+    'Your Gemini key is on the free tier, and `gemini-3.1-pro-preview` has no free tier. ' +
+    'Set `MODEL_PLANNER=gemini-3.6-flash` or enable billing in Google AI Studio.\n\n' +
+    'You can still upload a schedule as JSON: /format',
 
   formatHelp: (categories: string) =>
     '*JSON format*\n\n' +

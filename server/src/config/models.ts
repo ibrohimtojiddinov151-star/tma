@@ -7,10 +7,14 @@
  * Model ids verified against ai.google.dev/gemini-api/docs/models (2026-08).
  */
 export const MODELS = {
-  /** Full-day schedule generation — complex constraints, deepest reasoning. */
-  planner: process.env.MODEL_PLANNER ?? 'gemini-3.1-pro-preview',
-  /** Weekly / monthly analysis — long context, deep conclusions. */
-  analyst: process.env.MODEL_ANALYST ?? 'gemini-3.1-pro-preview',
+  /**
+   * Full-day schedule generation. Defaults to Flash, not Pro: the Pro preview
+   * has no free tier, so a free API key gets `429 ... limit: 0` on every call.
+   * Set MODEL_PLANNER=gemini-3.1-pro-preview once billing is enabled.
+   */
+  planner: process.env.MODEL_PLANNER ?? 'gemini-3.6-flash',
+  /** Weekly analysis. Same reasoning as the planner. */
+  analyst: process.env.MODEL_ANALYST ?? 'gemini-3.6-flash',
   /** Plain chat / Q&A — fast, stable, cheap. */
   chat: process.env.MODEL_CHAT ?? 'gemini-3.6-flash',
   /** Small edits to an existing schedule. */

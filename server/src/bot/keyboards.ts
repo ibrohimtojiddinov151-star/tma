@@ -22,6 +22,15 @@ export function appButton(): InlineKeyboard | undefined {
   return new InlineKeyboard().webApp('📱 Open TMA', env.WEBAPP_URL);
 }
 
+/** /plan offers both paths: let the AI draft the day, or upload your own JSON. */
+export function planKeyboard(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text('✨ AI: today', 'plan:ai:today')
+    .text('✨ AI: tomorrow', 'plan:ai:tomorrow')
+    .row()
+    .text('📄 Upload my own JSON', 'plan:json');
+}
+
 export function blockStartKeyboard(blockId: string): InlineKeyboard {
   return new InlineKeyboard()
     .text('▶️ Started', `blk:start:${blockId}`)

@@ -2,7 +2,7 @@ import { InputFile, type Bot, type Context } from 'grammy';
 import { db } from '../lib/supabase.js';
 import { requireUser, resetSession } from '../lib/auth.js';
 import { startLogin } from './auth-flow.js';
-import { appButton, confirmKeyboard, vocabKeyboard, webAppAvailable } from './keyboards.js';
+import { appButton, confirmKeyboard, planKeyboard, vocabKeyboard, webAppAvailable } from './keyboards.js';
 import { T, progressLine, renderDiff, renderSchedule } from './texts.js';
 import { addDaysISO, dayLabel, todayISO } from '../lib/time.js';
 import { computeProgress, computeStreak, getSchedule } from '../services/schedules.js';
@@ -128,11 +128,53 @@ export function registerCommands(bot: Bot): void {
     await ctx.reply(T.help, { parse_mode: 'Markdown' });
   }));
 
-  /** Schedules are built from an uploaded JSON file, not by the AI. */
+  /** Two ways to get a schedule: let the AI draft it, or upload JSON. */
   bot.command('plan', guarded(async (ctx) => {
-    await ctx.reply(T.planIntro, { parse_mode: 'Markdown' });
-    await sendTemplate(ctx);
+    if (!env.AI_ENABLED) {
+      await ctx.reply(T.planIntroJsonOnly, { parse_mode: 'Markdown' });
+      await sendTemplate(ctx);
+      return;
+    }
+    await ctx.reply(T.planIntro, { parse_mode: 'Markdown', reply_markup: planKeyboard() });
   }));
+
+  /** Registered before the catch-all in callbacks.ts, so it wins for `plan:*`. */
+  bot.callbackQuery(/^plan:/, async (ctx) => {
+    const tgId = ctx.from.id;
+    const user = await requireUser(tgId);
+    if (!user) {
+      await ctx.answerCallbackQuery({ text: 'Please sign in first: /start', show_alert: true });
+      return;
+    }
+
+    const action = ctx.callbackQuery.data.slice('plan:'.length);
+
+    if (action === 'json') {
+      await ctx.answerCallbackQuery();
+      await sendTemplate(ctx);
+      return;
+    }
+
+    const today = todayISO(user.timezone);
+    const target = action === 'ai:tomorrow' ? addDaysISO(today, 1, user.timezone) : today;
+
+    await ctx.answerCallbackQuery({ text: 'Building your schedule' });
+    await ctx.reply('⏳ Building your schedule. This can take 10 to 30 seconds.');
+
+    try {
+      const schedule = await generateSchedule(user, target);
+      await scheduleDay(user, schedule);
+      await showDay(ctx, user, target);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      log.error('ai_plan_failed', { error: msg });
+      if (/429|quota|RESOURCE_EXHAUSTED/i.test(msg)) {
+        await ctx.reply(T.quotaHint, { parse_mode: 'Markdown' });
+      } else {
+        await ctx.reply(`⚠️ ${msg}`);
+      }
+    }
+  });
 
   bot.command('format', guarded(async (ctx) => {
     await sendTemplate(ctx);

@@ -144,6 +144,17 @@ function blockReason(res: InteractionLike): string {
 }
 
 /**
+ * A model the key has no quota for answers 429 with `limit: 0`. That is a
+ * configuration problem, not a rate problem, so retrying the same model is
+ * pointless: switch to the fallback instead.
+ */
+function isQuotaError(e: unknown): boolean {
+  const status = (e as { status?: number })?.status;
+  const text = e instanceof Error ? e.message : String(e);
+  return status === 429 || /\b429\b|RESOURCE_EXHAUSTED|exceeded your current quota/i.test(text);
+}
+
+/**
  * Flatten a short chat history into a single input string.
  *
  * The Interactions API can carry history server-side via
@@ -203,12 +214,23 @@ export async function ask(opts: AskOptions): Promise<AskResult> {
   const primary = MODELS[opts.role];
   const started = Date.now();
 
-  let res = await callModel(primary, opts.role, opts);
-  let text = textOf(res);
   let usedModel = primary;
   let refused = false;
+  let res: InteractionLike;
 
-  if (isUnusable(text)) {
+  try {
+    res = await callModel(primary, opts.role, opts);
+  } catch (e) {
+    if (!isQuotaError(e) || primary === MODELS.fallback) throw e;
+    log.warn('ai_quota_fallback', { model: primary, fallback: MODELS.fallback, role: opts.role });
+    refused = true;
+    usedModel = MODELS.fallback;
+    res = await callModel(usedModel, 'fallback', { ...opts, thinking: 'low' });
+  }
+
+  let text = textOf(res);
+
+  if (isUnusable(text) && usedModel !== MODELS.fallback) {
     refused = true;
     log.warn('ai_unusable_response', {
       model: primary, role: opts.role, reason: blockReason(res), userId: opts.userId,
