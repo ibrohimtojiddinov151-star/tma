@@ -1,0 +1,13 @@
+node_modules
+**/node_modules
+webapp
+dist
+**/dist
+.git
+.github
+.env
+.env.local
+*.log
+README.md
+supabase
+.vercel

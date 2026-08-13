@@ -1,0 +1,15 @@
+{
+  "name": "tma",
+  "private": true,
+  "version": "0.1.0",
+  "description": "TMA — Time Management Assistant (Telegram bot + Mini App + AI)",
+  "workspaces": ["server", "webapp"],
+  "scripts": {
+    "dev": "npm run dev --workspace=server",
+    "dev:web": "npm run dev --workspace=webapp",
+    "build": "npm run build --workspace=server && npm run build --workspace=webapp",
+    "typecheck": "npm run typecheck --workspace=server && npm run typecheck --workspace=webapp",
+    "start": "npm run start --workspace=server"
+  },
+  "engines": { "node": ">=20" }
+}

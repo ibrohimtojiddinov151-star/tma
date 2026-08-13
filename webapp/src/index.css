@@ -1,0 +1,154 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Design tokens.
+ *
+ * Colors come from Telegram's theme so the app matches whatever the user has
+ * set (light, dark, custom). Every token has a standalone fallback so the app
+ * still looks right when opened in a plain browser.
+ */
+:root {
+  color-scheme: light dark;
+
+  --bg: var(--tg-theme-bg-color, #ffffff);
+  --surface: var(--tg-theme-secondary-bg-color, #f2f2f5);
+  --text: var(--tg-theme-text-color, #12131a);
+  --hint: var(--tg-theme-hint-color, #8a8b94);
+  --accent: var(--tg-theme-button-color, #2f6feb);
+  --accent-text: var(--tg-theme-button-text-color, #ffffff);
+  --link: var(--tg-theme-link-color, #2f6feb);
+
+  /* Hairlines and fills derived from the text color keep contrast in both modes. */
+  --line: color-mix(in srgb, var(--text) 10%, transparent);
+  --line-strong: color-mix(in srgb, var(--text) 18%, transparent);
+  --fill: color-mix(in srgb, var(--text) 5%, transparent);
+  --fill-strong: color-mix(in srgb, var(--text) 9%, transparent);
+
+  --ok: #17936b;
+  --warn: #b8791b;
+  --bad: #cf4b3f;
+
+  /* Shape lock: one radius scale for the whole app. */
+  --r-card: 14px;
+  --r-control: 10px;
+
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@supports not (color: color-mix(in srgb, red 50%, transparent)) {
+  :root {
+    --line: rgba(138, 139, 148, 0.22);
+    --line-strong: rgba(138, 139, 148, 0.36);
+    --fill: rgba(138, 139, 148, 0.12);
+    --fill-strong: rgba(138, 139, 148, 0.2);
+  }
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-size: 15px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overscroll-behavior-y: none;
+}
+
+/* Times, durations, percentages must not jitter as they update. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* Every tap target clears 44px. */
+button,
+a[role='button'],
+select,
+input[type='time'],
+input[type='date'] {
+  min-height: 44px;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  transition: transform 140ms var(--ease), background-color 140ms var(--ease), opacity 140ms var(--ease);
+}
+
+button:active:not(:disabled) {
+  transform: scale(0.985);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+  background: var(--surface);
+  border: 1px solid transparent;
+  border-radius: var(--r-control);
+}
+
+input::placeholder {
+  color: var(--hint);
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--fill);
+  border-radius: var(--r-control);
+}
+
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, var(--fill-strong), transparent);
+  animation: shimmer 1.4s infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
