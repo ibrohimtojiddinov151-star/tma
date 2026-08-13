@@ -48,7 +48,11 @@ export async function initQueue(): Promise<boolean> {
     maxRetriesPerRequest: null,
     lazyConnect: true,
     enableOfflineQueue: false,
-    connectTimeout: 3000,
+    connectTimeout: 5000,
+    // Railway's private network resolves only over IPv6, while Node prefers
+    // IPv4 by default and would fail with ENOTFOUND on *.railway.internal.
+    // family 0 lets the resolver use whichever the host actually has.
+    family: 0,
     // A few quick retries, then give up instead of reconnecting forever.
     retryStrategy: (times) => (times > 3 ? null : Math.min(times * 200, 1000)),
   });

@@ -1,4 +1,4 @@
-import type { Bot, Context } from 'grammy';
+import { InputFile, type Bot, type Context } from 'grammy';
 import { db } from '../lib/supabase.js';
 import { requireUser, resetSession } from '../lib/auth.js';
 import { startLogin } from './auth-flow.js';
@@ -7,11 +7,17 @@ import { T, progressLine, renderDiff, renderSchedule } from './texts.js';
 import { addDaysISO, dayLabel, todayISO } from '../lib/time.js';
 import { computeProgress, computeStreak, getSchedule } from '../services/schedules.js';
 import { chat, generateSchedule, proposeChange } from '../services/planner.js';
-import { analyzeErrors, weeklyReport } from '../services/reports.js';
+import { analyzeErrors, collectWeeklyStats, weeklyReport } from '../services/reports.js';
 import { dueCards } from '../services/vocab.js';
+import {
+  CATEGORY_LIST, ImportError, TEMPLATE_JSON, importSchedules, parseJsonText,
+} from '../services/import.js';
 import { scheduleDay } from '../queue/scheduler.js';
+import { env } from '../config/env.js';
 import { log } from '../lib/logger.js';
 import type { User } from '../types/db.js';
+
+const MAX_JSON_BYTES = 1024 * 1024;
 
 /** Wrap a handler so it only runs for an authenticated user. */
 function guarded(fn: (ctx: Context, user: User) => Promise<void>) {
@@ -27,7 +33,7 @@ function guarded(fn: (ctx: Context, user: User) => Promise<void>) {
       await fn(ctx, user);
     } catch (e) {
       log.error('command_failed', { error: e instanceof Error ? e.message : String(e) });
-      await ctx.reply(`⚠️ ${e instanceof Error ? e.message : T.aiError}`);
+      await ctx.reply(`⚠️ ${e instanceof Error ? e.message : T.genericError}`);
     }
   };
 }
@@ -53,13 +59,66 @@ async function showDay(ctx: Context, user: User, dateISO: string): Promise<void>
   if (s.rationale) await ctx.reply(`💡 ${s.rationale}`);
 }
 
+/** Send the blank template as a downloadable file plus the field reference. */
+async function sendTemplate(ctx: Context): Promise<void> {
+  await ctx.replyWithDocument(
+    new InputFile(Buffer.from(TEMPLATE_JSON, 'utf8'), 'schedule-template.json'),
+    { caption: 'Edit this file and send it back to me.' },
+  );
+  await ctx.reply(T.formatHelp(CATEGORY_LIST), { parse_mode: 'Markdown' });
+}
+
+/** Shared by the document handler and the pasted-JSON handler. */
+async function handleImport(ctx: Context, user: User, jsonText: string): Promise<void> {
+  let days;
+  try {
+    days = parseJsonText(jsonText);
+  } catch (e) {
+    if (e instanceof ImportError) {
+      const detail = e.details.length > 0 ? `\n\n${e.details.map((d) => `• ${d}`).join('\n')}` : '';
+      await ctx.reply(`❌ ${e.message}${detail}\n\nSend /format to get a working template.`);
+      return;
+    }
+    throw e;
+  }
+
+  const { saved, warnings } = await importSchedules(user, days);
+
+  let armed = 0;
+  for (const schedule of saved) {
+    armed += await scheduleDay(user, schedule);
+  }
+
+  await ctx.reply(
+    `✅ Imported ${saved.length} ${saved.length === 1 ? 'day' : 'days'}.\n` +
+    (armed > 0
+      ? `⏰ ${armed} reminders scheduled.`
+      : '⚠️ Reminders are off right now (no Redis connection).'),
+  );
+
+  for (const w of warnings) await ctx.reply(`⚠️ ${w}`);
+
+  for (const schedule of saved) {
+    const p = computeProgress(schedule.blocks);
+    await ctx.reply(
+      renderSchedule(
+        dayLabel(schedule.date, user.timezone),
+        schedule.blocks,
+        progressLine(p.doneMinutes, p.plannedMinutes, p.donePercent),
+      ),
+      { parse_mode: 'Markdown' },
+    );
+  }
+}
+
 export function registerCommands(bot: Bot): void {
   bot.command('start', async (ctx) => {
     const tgId = ctx.from?.id;
     if (!tgId) return;
     const user = await requireUser(tgId);
     if (user) {
-      await ctx.reply(T.loginOk(user.first_name), { parse_mode: 'Markdown', reply_markup: appButton() });
+      await ctx.reply(T.loginOk(user.first_name), { parse_mode: 'Markdown' });
+      await ctx.reply(T.help, { parse_mode: 'Markdown' });
       return;
     }
     await startLogin(ctx);
@@ -69,20 +128,14 @@ export function registerCommands(bot: Bot): void {
     await ctx.reply(T.help, { parse_mode: 'Markdown' });
   }));
 
-  bot.command('app', guarded(async (ctx) => {
-    if (!webAppAvailable()) {
-      await ctx.reply(
-        'ℹ️ The Mini App is not connected yet.\n\n' +
-        'Telegram only accepts *HTTPS* urls for Web App buttons, and the local server runs on ' +
-        '`http://localhost:5173`.\n\n' +
-        'To connect it: run `npx localtunnel --port 5173`, put the HTTPS url into `WEBAPP_URL` ' +
-        'in `.env`, then restart the server.\n\n' +
-        'Until then everything works through the bot: /today, /plan, /report',
-        { parse_mode: 'Markdown' },
-      );
-      return;
-    }
-    await ctx.reply('Open TMA:', { reply_markup: appButton() });
+  /** Schedules are built from an uploaded JSON file, not by the AI. */
+  bot.command('plan', guarded(async (ctx) => {
+    await ctx.reply(T.planIntro, { parse_mode: 'Markdown' });
+    await sendTemplate(ctx);
+  }));
+
+  bot.command('format', guarded(async (ctx) => {
+    await sendTemplate(ctx);
   }));
 
   bot.command('today', guarded(async (ctx, user) => {
@@ -93,43 +146,55 @@ export function registerCommands(bot: Bot): void {
     await showDay(ctx, user, addDaysISO(todayISO(user.timezone), 1, user.timezone));
   }));
 
-  bot.command('plan', guarded(async (ctx, user) => {
-    const arg = commandArg(ctx).toLowerCase();
-    const today = todayISO(user.timezone);
-    let target = today;
-    if (arg === 'tomorrow') target = addDaysISO(today, 1, user.timezone);
-    else if (arg === 'overmorrow' || arg === 'day-after') target = addDaysISO(today, 2, user.timezone);
-    else if (/^\d{4}-\d{2}-\d{2}$/.test(arg)) target = arg;
-
-    await ctx.reply(T.generating);
-    const schedule = await generateSchedule(user, target);
-    await scheduleDay(user, schedule);
-    await showDay(ctx, user, target);
+  bot.command('day', guarded(async (ctx, user) => {
+    const arg = commandArg(ctx);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(arg)) {
+      await ctx.reply('Usage: `/day 2026-08-20`', { parse_mode: 'Markdown' });
+      return;
+    }
+    await showDay(ctx, user, arg);
   }));
 
   bot.command('report', guarded(async (ctx, user) => {
-    await ctx.reply('⏳ Putting your weekly report together.');
-    const { stats, ai } = await weeklyReport(user);
+    const stats = await collectWeeklyStats(user);
 
     const cats = Object.entries(stats.byCategory)
       .sort((a, b) => b[1] - a[1])
       .map(([k, v]) => `• ${k}: ${(v / 60).toFixed(1)} h`)
       .join('\n');
 
-    const body = [
-      `*Weekly report* (${stats.from} to ${stats.to})`,
-      '',
-      `Completed: *${stats.totalDoneHours}* of ${stats.totalPlannedHours} hours`,
-      '',
-      cats ? `*By category*\n${cats}` : '',
-      '',
-      ai.summary,
-      ai.wins.length ? `\n✅ *Going well*\n${ai.wins.map((w) => `• ${w}`).join('\n')}` : '',
-      ai.problems.length ? `\n⚠️ *Problems*\n${ai.problems.map((w) => `• ${w}`).join('\n')}` : '',
-      ai.recommendations.length ? `\n🎯 *Recommendations*\n${ai.recommendations.map((w) => `• ${w}`).join('\n')}` : '',
-    ].filter(Boolean).join('\n');
+    const daily = stats.dailyPercent
+      .map((d) => `• ${d.date}: ${d.percent}%`)
+      .join('\n');
 
-    await ctx.reply(body, { parse_mode: 'Markdown' });
+    const skips = Object.entries(stats.skipReasons)
+      .map(([k, v]) => `• ${k}: ${v}`)
+      .join('\n');
+
+    await ctx.reply(
+      [
+        `*Weekly report* (${stats.from} to ${stats.to})`,
+        '',
+        `Completed: *${stats.totalDoneHours}* of ${stats.totalPlannedHours} hours`,
+        cats ? `\n*By category*\n${cats}` : '',
+        daily ? `\n*Daily completion*\n${daily}` : '',
+        skips ? `\n*Skip reasons*\n${skips}` : '',
+      ].filter(Boolean).join('\n'),
+      { parse_mode: 'Markdown' },
+    );
+
+    if (!env.AI_ENABLED) return;
+
+    const { ai } = await weeklyReport(user);
+    await ctx.reply(
+      [
+        ai.summary,
+        ai.wins.length ? `\n✅ *Going well*\n${ai.wins.map((w) => `• ${w}`).join('\n')}` : '',
+        ai.problems.length ? `\n⚠️ *Problems*\n${ai.problems.map((w) => `• ${w}`).join('\n')}` : '',
+        ai.recommendations.length ? `\n🎯 *Recommendations*\n${ai.recommendations.map((w) => `• ${w}`).join('\n')}` : '',
+      ].filter(Boolean).join('\n'),
+      { parse_mode: 'Markdown' },
+    );
 
     const patterns = await analyzeErrors(user);
     if (patterns && patterns.patterns.length > 0) {
@@ -163,7 +228,7 @@ export function registerCommands(bot: Bot): void {
     const cards = await dueCards(user, 1);
     const card = cards[0];
     if (!card) {
-      await ctx.reply('🎉 Nothing due for review. Add new words from the Mini App.');
+      await ctx.reply('🎉 Nothing due for review.');
       return;
     }
     await ctx.reply(
@@ -183,9 +248,26 @@ export function registerCommands(bot: Bot): void {
       `Sleep: ${user.sleep_time ?? 'not set'}\n` +
       `Notifications: ${user.notify_mode}\n` +
       `Goals:\n${goals}\n\n` +
-      'Open the app to edit these:',
-      { parse_mode: 'Markdown', reply_markup: appButton() },
+      'To change your timezone: `/timezone Asia/Tashkent`',
+      { parse_mode: 'Markdown' },
     );
+  }));
+
+  bot.command('timezone', guarded(async (ctx, user) => {
+    const tz = commandArg(ctx);
+    if (!tz) {
+      await ctx.reply(`Current timezone: \`${user.timezone}\`\n\nTo change it: \`/timezone Asia/Tashkent\``,
+        { parse_mode: 'Markdown' });
+      return;
+    }
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: tz });
+    } catch {
+      await ctx.reply('That is not a valid timezone. Use a name like `Asia/Tashkent`.', { parse_mode: 'Markdown' });
+      return;
+    }
+    await db.from('users').update({ timezone: tz }).eq('id', user.id);
+    await ctx.reply(`✅ Timezone set to \`${tz}\`.`, { parse_mode: 'Markdown' });
   }));
 
   bot.command('pause', guarded(async (ctx, user) => {
@@ -200,6 +282,18 @@ export function registerCommands(bot: Bot): void {
     }
   }));
 
+  bot.command('app', guarded(async (ctx) => {
+    if (!env.MINIAPP_ENABLED) {
+      await ctx.reply(T.miniAppOff);
+      return;
+    }
+    if (!webAppAvailable()) {
+      await ctx.reply('The Mini App url must be HTTPS. Set `WEBAPP_URL` and restart.', { parse_mode: 'Markdown' });
+      return;
+    }
+    await ctx.reply('Open TMA:', { reply_markup: appButton() });
+  }));
+
   bot.command('logout', async (ctx) => {
     const tgId = ctx.from?.id;
     if (!tgId) return;
@@ -207,14 +301,57 @@ export function registerCommands(bot: Bot): void {
     await ctx.reply('Signed out. Send /start to sign in again.');
   });
 
-  /** Free text goes straight to the AI. Schedule edits come back as proposals. */
+  /** A .json document is a schedule import. */
+  bot.on('message:document', guarded(async (ctx, user) => {
+    const doc = ctx.message?.document;
+    if (!doc) return;
+
+    const name = doc.file_name ?? 'file';
+    if (!name.toLowerCase().endsWith('.json')) {
+      await ctx.reply('Please send a `.json` file. Use /format to get the template.', { parse_mode: 'Markdown' });
+      return;
+    }
+    if ((doc.file_size ?? 0) > MAX_JSON_BYTES) {
+      await ctx.reply('That file is too large. A schedule file should be a few kilobytes.');
+      return;
+    }
+
+    await ctx.replyWithChatAction('typing');
+
+    const file = await ctx.getFile();
+    if (!file.file_path) {
+      await ctx.reply('Could not download the file from Telegram. Please try again.');
+      return;
+    }
+
+    const url = `https://api.telegram.org/file/bot${env.BOT_TOKEN}/${file.file_path}`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      await ctx.reply('Could not download the file from Telegram. Please try again.');
+      return;
+    }
+
+    await handleImport(ctx, user, await res.text());
+  }));
+
+  /** Free text: pasted JSON is imported, anything else gets a short hint. */
   bot.on('message:text', guarded(async (ctx, user) => {
     const text = (ctx.message?.text ?? '').trim();
     if (!text || text.startsWith('/')) return;
 
+    if (text.startsWith('{') || text.startsWith('[')) {
+      await ctx.replyWithChatAction('typing');
+      await handleImport(ctx, user, text);
+      return;
+    }
+
+    if (!env.AI_ENABLED) {
+      await ctx.reply(T.aiOff, { parse_mode: 'Markdown' });
+      return;
+    }
+
     const editHint = /(shorten|move|swap|replace|add|remove|reschedule|shift|earlier|later|shrink|cut)/i;
     const today = todayISO(user.timezone);
-
     await ctx.replyWithChatAction('typing');
 
     if (editHint.test(text)) {
@@ -240,6 +377,24 @@ export function registerCommands(bot: Bot): void {
     ]);
 
     await ctx.reply(answer);
+  }));
+
+  /** The AI planner stays available behind the flag, but /plan is the JSON path. */
+  bot.command('aiplan', guarded(async (ctx, user) => {
+    if (!env.AI_ENABLED) {
+      await ctx.reply(T.aiOff, { parse_mode: 'Markdown' });
+      return;
+    }
+    const arg = commandArg(ctx).toLowerCase();
+    const today = todayISO(user.timezone);
+    let target = today;
+    if (arg === 'tomorrow') target = addDaysISO(today, 1, user.timezone);
+    else if (/^\d{4}-\d{2}-\d{2}$/.test(arg)) target = arg;
+
+    await ctx.reply('⏳ Building your schedule. This can take 10 to 30 seconds.');
+    const schedule = await generateSchedule(user, target);
+    await scheduleDay(user, schedule);
+    await showDay(ctx, user, target);
   }));
 
   /** Contact share during login. */

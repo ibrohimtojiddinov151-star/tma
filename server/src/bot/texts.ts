@@ -37,28 +37,64 @@ export const T = {
   locked: (mins: number) =>
     `🔒 Too many failed attempts. Try again in ${mins} minutes.`,
   loginOk: (name: string) =>
-    `Welcome back, *${name}*! ✅\n\nSend /today or /plan to get started.\n` +
-    'Open /app for the full experience.',
+    `Welcome back, *${name}*! ✅\n\nSend /plan to upload a schedule, or /today to see the current one.`,
   needLogin: 'Please sign in first. Send /start.',
   noSchedule: (date: string) =>
     `No schedule for ${date}.\n\nUse /plan to build one.`,
-  generating: '⏳ Building your schedule. This can take 10 to 30 seconds.',
-  aiError: 'Could not reach the AI. Please try again in a moment.',
+  genericError: 'Something went wrong. Please try again.',
+
+  planIntro:
+    '*Upload a schedule*\n\n' +
+    'Send me a `.json` file with your day and I will save it, then send reminders ' +
+    'before, at the start of, and after every block.\n\n' +
+    'You can also paste the JSON straight into the chat.\n\n' +
+    'A template is on its way.',
+
+  formatHelp: (categories: string) =>
+    '*JSON format*\n\n' +
+    'One day:\n' +
+    '```\n{\n  "date": "2026-08-14",\n  "blocks": [\n    {\n      "start": "07:00",\n      "end": "09:00",\n      "title": "IELTS Reading",\n      "category": "reading"\n    }\n  ]\n}\n```\n' +
+    'Several days at once:\n' +
+    '```\n{ "schedules": [ { "date": "...", "blocks": [...] }, { "date": "...", "blocks": [...] } ] }\n```\n' +
+    '*Required in every block*\n' +
+    '• `start`, `end` - `HH:mm`, 24-hour clock\n' +
+    '• `title` - any text\n' +
+    '• `category` - one from the list below\n\n' +
+    '*Optional*\n' +
+    '• `notes` - shown when you open the block\n' +
+    '• `notify` - `true` by default, set `false` for silent blocks\n' +
+    '• `locked` - `true` marks a block as fixed\n\n' +
+    `*Categories*\n\`${categories}\`\n\n` +
+    '*Rules*\n' +
+    '• Blocks must not overlap\n' +
+    '• `end` must come after `start`, except the `sleep` block, which may cross midnight\n' +
+    '• A `sleep` block gives you a wake-up reminder next morning\n' +
+    '• Re-uploading the same date replaces that day, but `locked` blocks stay',
+
+  aiOff:
+    'The AI assistant is off right now.\n\n' +
+    'Send /plan to upload a schedule as a JSON file, or /today to see the current one.',
+
+  miniAppOff:
+    'The Mini App is disabled right now. Everything works through the bot: ' +
+    '/plan, /today, /report.',
   paused: '🔕 Notifications paused. Send /pause again to turn them back on.',
   resumed: '🔔 Notifications are back on.',
   help:
     '*Commands*\n' +
+    '/plan - upload a schedule as a JSON file\n' +
+    '/format - JSON format and a template file\n' +
     '/today - today\'s schedule\n' +
     '/tomorrow - tomorrow\'s schedule\n' +
-    '/plan - build a new schedule with AI\n' +
+    '/day 2026-08-20 - any date\n' +
     '/report - weekly report\n' +
     '/mistake - add an entry to your mistake log\n' +
     '/vocab - review words that are due\n' +
     '/settings - your settings\n' +
+    '/timezone - change your timezone\n' +
     '/pause - pause notifications\n' +
-    '/app - open the Mini App\n' +
     '/logout - sign out\n\n' +
-    'You can also just write normally, for example: _"I am tired today, shorten the evening blocks"_',
+    'You can also paste JSON directly into the chat instead of sending a file.',
 };
 
 export function renderBlock(b: Block): string {

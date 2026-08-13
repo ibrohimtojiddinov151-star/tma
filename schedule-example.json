@@ -1,0 +1,19 @@
+{
+  "date": "2026-08-14",
+  "blocks": [
+    { "start": "06:00", "end": "07:00", "title": "Breakfast and exercise", "category": "exercise" },
+    { "start": "07:00", "end": "09:00", "title": "IELTS Reading - 2 passages", "category": "reading", "notes": "Use a timer, then review every mistake" },
+    { "start": "09:00", "end": "09:15", "title": "Break", "category": "rest", "notify": false },
+    { "start": "09:15", "end": "11:15", "title": "SAT Math", "category": "sat_math" },
+    { "start": "11:15", "end": "11:30", "title": "Break", "category": "rest", "notify": false },
+    { "start": "11:30", "end": "12:30", "title": "Vocabulary review", "category": "vocab" },
+    { "start": "12:30", "end": "13:30", "title": "Lunch", "category": "meal", "notify": false },
+    { "start": "13:30", "end": "15:00", "title": "IELTS Listening", "category": "listening" },
+    { "start": "15:00", "end": "15:30", "title": "Travel to class", "category": "commute" },
+    { "start": "16:00", "end": "18:00", "title": "Class", "category": "course", "locked": true },
+    { "start": "18:00", "end": "18:30", "title": "Travel home", "category": "commute" },
+    { "start": "19:00", "end": "21:00", "title": "SAT Reading and Writing", "category": "sat_rw" },
+    { "start": "21:00", "end": "22:00", "title": "Mistake log and vocab", "category": "vocab" },
+    { "start": "22:30", "end": "06:00", "title": "Sleep", "category": "sleep" }
+  ]
+}

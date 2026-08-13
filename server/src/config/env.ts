@@ -38,6 +38,13 @@ if (loaded.length === 0 && process.env.NODE_ENV !== 'production') {
   );
 }
 
+/**
+ * Env booleans arrive as strings. z.coerce.boolean() would turn "false" into
+ * true, so parse explicitly.
+ */
+const envBool = (fallback: boolean) =>
+  z.string().optional().transform((v) => (v === undefined ? fallback : v.trim().toLowerCase() === 'true'));
+
 const schema = z.object({
   BOT_TOKEN: z.string().min(10, 'BOT_TOKEN must be set in .env'),
   BOT_WEBHOOK_SECRET: z.string().default('tma-secret'),
@@ -50,6 +57,11 @@ const schema = z.object({
 
   GEMINI_API_KEY: z.string().optional().default(''),
   AI_DAILY_CALL_LIMIT: z.coerce.number().int().positive().default(60),
+
+  // Feature flags. Both off by default: schedules come from an uploaded JSON
+  // file and the bot is the only interface.
+  AI_ENABLED: envBool(false),
+  MINIAPP_ENABLED: envBool(false),
 
   REDIS_URL: z.string().default('redis://127.0.0.1:6379'),
 

@@ -46,14 +46,14 @@ export function buildBot(): typeof bot {
 
 export const COMMANDS = [
   { command: 'start', description: 'Sign in' },
+  { command: 'plan', description: 'Upload a schedule (JSON)' },
+  { command: 'format', description: 'JSON format and template' },
   { command: 'today', description: "Today's schedule" },
   { command: 'tomorrow', description: "Tomorrow's schedule" },
-  { command: 'plan', description: 'Build a new schedule' },
   { command: 'report', description: 'Weekly report' },
   { command: 'vocab', description: 'Review vocabulary' },
   { command: 'mistake', description: 'Mistake log' },
   { command: 'settings', description: 'Settings' },
   { command: 'pause', description: 'Pause notifications' },
-  { command: 'app', description: 'Open the Mini App' },
   { command: 'help', description: 'Help' },
 ];

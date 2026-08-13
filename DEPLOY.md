@@ -60,12 +60,25 @@ environment variables. That is expected.
 
 In the same project: **New** → **Database** → **Add Redis**.
 
-Railway injects `REDIS_URL` into the project automatically. Confirm it appears
-under your service's **Variables** tab. If it does not, add it manually with the
-value `${{Redis.REDIS_URL}}`.
+Railway does **not** wire the database into other services automatically. Go to
+the **tma** service → **Variables** → **New Variable** and add:
 
-With Redis present, scheduled notifications work. Without it the bot still runs,
-just without reminders.
+| Name | Value |
+|---|---|
+| `REDIS_URL` | `${{Redis.REDIS_URL}}` |
+
+That value is a live reference, not a copy, so it keeps working if Railway
+rotates the credentials.
+
+Do **not** enable *Public Access* on the Redis service. Both services sit in the
+same private network; a public endpoint exposes the database and bills egress.
+
+Note that Railway's private network is IPv6-only. The Redis client is created
+with `family: 0` for that reason, otherwise Node resolves `*.railway.internal`
+over IPv4 and fails with `ENOTFOUND`.
+
+With Redis connected, scheduled notifications work. Without it the bot still
+runs, just without reminders.
 
 ---
 
