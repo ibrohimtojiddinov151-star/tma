@@ -8,9 +8,9 @@ import { getBlock, setBlockStatus } from '../services/schedules.js';
 import { dueCards } from '../services/vocab.js';
 import { getUserById } from '../lib/auth.js';
 import { callProvider } from '../services/call-provider.js';
-import { blockEndKeyboard, blockStartKeyboard, wakeKeyboard } from '../bot/keyboards.js';
-import { CATEGORY_EMOJI, CATEGORY_LABEL } from '../bot/texts.js';
-import { blockMinutes, hhmm } from '../lib/time.js';
+import { blockStartKeyboard, doneKeyboard, wakeKeyboard } from '../bot/keyboards.js';
+import { CATEGORY_EMOJI, CATEGORY_LABEL, T } from '../bot/texts.js';
+import { blockMinutes, hhmm, nowIn } from '../lib/time.js';
 
 async function isPaused(userId: string): Promise<boolean> {
   const u = await getUserById(userId);
@@ -81,11 +81,19 @@ export function startNotificationWorker(): Worker<NotifyJob> | null {
         }
       }
 
-      if (data.type === 'end') {
+      // Asked 5 minutes before the block ends, while the work is still fresh.
+      // The buttons stay live until answered; daily-cron closes stale ones.
+      if (data.type === 'confirm') {
+        const owner = await getUserById(data.userId);
+        const tz = owner?.timezone ?? 'Asia/Tashkent';
+        const now = nowIn(tz);
+        const endMin = Number(block.end_time.slice(0, 2)) * 60 + Number(block.end_time.slice(3, 5));
+        const minsLeft = Math.max(0, endMin - (now.hour * 60 + now.minute));
+
         await sendMd(
           data.telegramId,
-          `${emoji} *${block.title}* is done.\n\nHow focused were you? (1 = poor, 5 = great)`,
-          { reply_markup: blockEndKeyboard(block.id) },
+          T.confirmAsk(`${emoji} ${block.title}`, minsLeft),
+          { reply_markup: doneKeyboard(block.id) },
         );
       }
 

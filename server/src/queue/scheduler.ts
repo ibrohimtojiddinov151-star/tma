@@ -20,7 +20,10 @@ export async function cancelJobsForSchedule(scheduleId: string): Promise<void> {
 export async function cancelJobsForBlock(blockId: string): Promise<void> {
   const q = getQueue();
   if (q) {
-    for (const k of [jobId('pre', blockId), jobId('start', blockId), jobId('end', blockId)]) {
+    for (const k of [
+      jobId('pre', blockId), jobId('start', blockId),
+      jobId('confirm', blockId), jobId('end', blockId),
+    ]) {
       const job = await q.getJob(k);
       if (job) await job.remove().catch(() => undefined);
     }
@@ -70,7 +73,12 @@ export async function scheduleDay(user: User, schedule: ScheduleWithBlocks): Pro
 
     await enqueue({ ...base, type: 'pre' }, start.minus({ minutes: 5 }).toMillis(), jobId('pre', b.id));
     await enqueue({ ...base, type: 'start' }, start.toMillis(), jobId('start', b.id));
-    await enqueue({ ...base, type: 'end' }, end.toMillis(), jobId('end', b.id));
+
+    // "Did you do it?" lands 5 minutes before the block ends, so the answer is
+    // given while the work is still fresh. Very short blocks get it at the end.
+    const lengthMin = end.diff(start, 'minutes').minutes;
+    const confirmAt = lengthMin > 10 ? end.minus({ minutes: 5 }) : end;
+    await enqueue({ ...base, type: 'confirm' }, confirmAt.toMillis(), jobId('confirm', b.id));
     armed += 3;
   }
 
@@ -102,6 +110,15 @@ export async function scheduleWakeEscalation(job: NotifyJob, step: number): Prom
   if (step > 5) return;
   const fireAt = Date.now() + 2 * 60_000;
   await enqueue({ ...job, type: 'wake', step }, fireAt, `wake:${job.userId}:${job.dateISO}:${step}`);
+}
+
+/** "Still working" pushes the confirmation question back by a few minutes. */
+export async function snoozeConfirm(job: NotifyJob, minutes: number): Promise<void> {
+  await enqueue(
+    { ...job, type: 'confirm' },
+    Date.now() + minutes * 60_000,
+    `confirm:${job.blockId}:snz:${Date.now()}`,
+  );
 }
 
 export async function snoozeBlock(job: NotifyJob, minutes: number): Promise<void> {

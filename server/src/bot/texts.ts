@@ -91,6 +91,16 @@ export const T = {
   miniAppOff:
     'The Mini App is disabled right now. Everything works through the bot: ' +
     '/plan, /today, /report.',
+  confirmAsk: (title: string, minsLeft: number) =>
+    `${minsLeft > 0 ? `⏳ ${minsLeft} minutes left` : '⏰ Time is up'}\n\n` +
+    `*${title}*\n\nDid you do it?`,
+  confirmDone: 'Marked as done ✅',
+  confirmMiss: 'Marked as not done ❌',
+  confirmLater: "I'll ask again in 15 minutes ⏳",
+  autoMissed: (title: string) =>
+    `❌ *${title}* was left unanswered for a day, so I marked it as not done.\n\n` +
+    'You can still change it from /today.',
+
   paused: '🔕 Notifications paused. Send /pause again to turn them back on.',
   resumed: '🔔 Notifications are back on.',
   help:
@@ -107,6 +117,7 @@ export const T = {
     '/timezone - change your timezone\n' +
     '/pause - pause notifications\n' +
     '/logout - sign out\n\n' +
+    'The buttons at the bottom do the same thing without typing.\n' +
     'You can also paste JSON directly into the chat instead of sending a file.',
 };
 
@@ -120,6 +131,29 @@ export function renderBlock(b: Block): string {
 export function renderSchedule(dateLabel: string, blocks: Block[], progressLine: string): string {
   if (blocks.length === 0) return `*${dateLabel}*\n\nNo blocks yet.`;
   return `*${dateLabel}*\n\n${blocks.map(renderBlock).join('\n')}\n\n${progressLine}`;
+}
+
+/**
+ * Header for the checklist message. The blocks themselves live on the buttons,
+ * so the text stays short: a long text plus 20 buttons will not fit on screen.
+ */
+export function renderChecklistHeader(
+  dateLabel: string,
+  done: number,
+  total: number,
+  doneMin: number,
+  plannedMin: number,
+): string {
+  const percent = total === 0 ? 0 : Math.round((done / total) * 100);
+  const bars = Math.round(percent / 10);
+  return [
+    `*${dateLabel}*`,
+    '',
+    `${'█'.repeat(bars)}${'░'.repeat(10 - bars)} ${percent}%`,
+    `${done} of ${total} blocks · ${(doneMin / 60).toFixed(1)} / ${(plannedMin / 60).toFixed(1)} hours`,
+    '',
+    '_Tap a block to mark it done. Tap again to undo._',
+  ].join('\n');
 }
 
 export function renderDiff(diff: {

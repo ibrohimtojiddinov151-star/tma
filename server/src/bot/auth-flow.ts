@@ -3,7 +3,7 @@ import {
   getSession, loginWithPassword, LOCK_MINUTES, normalizePhone, resetSession, setSession,
 } from '../lib/auth.js';
 import { T } from './texts.js';
-import { appButton, phoneKeyboard, removeKeyboard } from './keyboards.js';
+import { mainMenu, phoneKeyboard, removeKeyboard } from './keyboards.js';
 
 /**
  * Bot login gate: every chat starts at "awaiting_phone".
@@ -68,7 +68,7 @@ export async function handleLoginStep(ctx: Context, text: string): Promise<boole
     if (result.ok && result.user) {
       await ctx.reply(T.loginOk(result.user.first_name), {
         parse_mode: 'Markdown',
-        reply_markup: appButton(),
+        reply_markup: mainMenu,
       });
       await ctx.reply(T.help, { parse_mode: 'Markdown' });
       return true;

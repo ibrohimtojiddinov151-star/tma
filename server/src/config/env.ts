@@ -58,9 +58,10 @@ const schema = z.object({
   GEMINI_API_KEY: z.string().optional().default(''),
   AI_DAILY_CALL_LIMIT: z.coerce.number().int().positive().default(60),
 
-  // Feature flags. Both off by default: schedules come from an uploaded JSON
-  // file and the bot is the only interface.
-  AI_ENABLED: envBool(false),
+  // Feature flags.
+  // AI is on by default: /plan offers both the AI draft and the JSON upload.
+  // The Mini App stays off; the bot is the only interface for now.
+  AI_ENABLED: envBool(true),
   MINIAPP_ENABLED: envBool(false),
 
   REDIS_URL: z.string().default('redis://127.0.0.1:6379'),

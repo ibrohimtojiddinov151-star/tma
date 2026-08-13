@@ -5,9 +5,9 @@ import { getBlock, getSchedule, setBlockStatus, setSkipReason } from '../service
 import { acceptPendingChange, rejectPendingChange } from '../services/planner.js';
 import { rebuildRestOfDay } from '../services/recovery.js';
 import { reviewCard, dueCards } from '../services/vocab.js';
-import { scheduleDay, snoozeBlock } from '../queue/scheduler.js';
-import { skipReasonKeyboard, vocabKeyboard } from './keyboards.js';
-import { progressLine, renderSchedule } from './texts.js';
+import { scheduleDay, snoozeBlock, snoozeConfirm } from '../queue/scheduler.js';
+import { checklistKeyboard, skipReasonKeyboard, vocabKeyboard } from './keyboards.js';
+import { T, progressLine, renderChecklistHeader, renderSchedule } from './texts.js';
 import { computeProgress } from '../services/schedules.js';
 import { dayLabel, todayISO } from '../lib/time.js';
 import { log } from '../lib/logger.js';
@@ -27,6 +27,62 @@ export function registerCallbacks(bot: Bot): void {
     const kind = parts[0];
 
     try {
+      // ---- checklist row tapped: toggle and redraw the same message ----
+      if (kind === 'chk') {
+        const blockId = parts[1] as string;
+        const dateISO = parts[2] as string;
+
+        const block = await getBlock(blockId);
+        if (!block) {
+          await ctx.answerCallbackQuery({ text: 'That block no longer exists', show_alert: true });
+          return;
+        }
+
+        const next = block.status === 'done' ? 'pending' : 'done';
+        await setBlockStatus(blockId, next);
+        await ctx.answerCallbackQuery({ text: next === 'done' ? 'Done ✅' : 'Unmarked' });
+
+        const schedule = await getSchedule(user.id, dateISO);
+        if (!schedule) return;
+
+        const p = computeProgress(schedule.blocks);
+        const done = schedule.blocks.filter((b) => b.status === 'done').length;
+
+        await ctx.editMessageText(
+          renderChecklistHeader(
+            dayLabel(dateISO, user.timezone),
+            done, schedule.blocks.length, p.doneMinutes, p.plannedMinutes,
+          ),
+          { parse_mode: 'Markdown', reply_markup: checklistKeyboard(schedule.blocks, dateISO) },
+        ).catch(() => undefined);
+        return;
+      }
+
+      // ---- "did you do it?" answered ----
+      if (kind === 'cfm') {
+        const action = parts[1];
+        const blockId = parts[2] as string;
+
+        if (action === 'later') {
+          const block = await getBlock(blockId);
+          if (block) {
+            await snoozeConfirm({ type: 'confirm', userId: user.id, telegramId: tgId, blockId }, 15);
+          }
+          await ctx.answerCallbackQuery({ text: T.confirmLater });
+          return;
+        }
+
+        const done = action === 'done';
+        await setBlockStatus(blockId, done ? 'done' : 'skipped');
+        await ctx.answerCallbackQuery({ text: done ? T.confirmDone : T.confirmMiss });
+        await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => undefined);
+
+        if (!done) {
+          await ctx.reply('What got in the way?', { reply_markup: skipReasonKeyboard(blockId) });
+        }
+        return;
+      }
+
       // ---- block lifecycle ----
       if (kind === 'blk') {
         const action = parts[1];

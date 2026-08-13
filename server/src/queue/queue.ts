@@ -6,7 +6,7 @@ import { log } from '../lib/logger.js';
 export const NOTIF_QUEUE = 'tma-notifications';
 
 export interface NotifyJob {
-  type: 'pre' | 'start' | 'end' | 'wake' | 'escalation';
+  type: 'pre' | 'start' | 'confirm' | 'end' | 'wake' | 'escalation';
   userId: string;
   telegramId: number;
   blockId?: string;

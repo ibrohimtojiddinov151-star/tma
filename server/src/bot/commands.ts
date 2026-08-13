@@ -1,9 +1,12 @@
-import { InputFile, type Bot, type Context } from 'grammy';
+import { InlineKeyboard, InputFile, type Bot, type Context } from 'grammy';
 import { db } from '../lib/supabase.js';
 import { requireUser, resetSession } from '../lib/auth.js';
 import { startLogin } from './auth-flow.js';
-import { appButton, confirmKeyboard, planKeyboard, vocabKeyboard, webAppAvailable } from './keyboards.js';
-import { T, progressLine, renderDiff, renderSchedule } from './texts.js';
+import {
+  MENU, appButton, checklistKeyboard, confirmKeyboard, mainMenu, planKeyboard,
+  vocabKeyboard, webAppAvailable,
+} from './keyboards.js';
+import { T, progressLine, renderChecklistHeader, renderDiff, renderSchedule } from './texts.js';
 import { addDaysISO, dayLabel, todayISO } from '../lib/time.js';
 import { computeProgress, computeStreak, getSchedule } from '../services/schedules.js';
 import { chat, generateSchedule, proposeChange } from '../services/planner.js';
@@ -42,20 +45,23 @@ function commandArg(ctx: Context): string {
   return ((ctx as unknown as { match?: string }).match ?? '').trim();
 }
 
+/** The day as one tappable checklist message. */
 async function showDay(ctx: Context, user: User, dateISO: string): Promise<void> {
   const s = await getSchedule(user.id, dateISO);
   const label = dayLabel(dateISO, user.timezone);
   if (!s || s.blocks.length === 0) {
-    await ctx.reply(T.noSchedule(label));
+    await ctx.reply(T.noSchedule(label), { reply_markup: mainMenu });
     return;
   }
+
   const p = computeProgress(s.blocks);
-  const streak = await computeStreak(user);
-  const extra = streak > 1 ? `\n🔥 Streak: ${streak} days` : '';
+  const done = s.blocks.filter((b) => b.status === 'done').length;
+
   await ctx.reply(
-    renderSchedule(label, s.blocks, progressLine(p.doneMinutes, p.plannedMinutes, p.donePercent) + extra),
-    { parse_mode: 'Markdown' },
+    renderChecklistHeader(label, done, s.blocks.length, p.doneMinutes, p.plannedMinutes),
+    { parse_mode: 'Markdown', reply_markup: checklistKeyboard(s.blocks, dateISO) },
   );
+
   if (s.rationale) await ctx.reply(`💡 ${s.rationale}`);
 }
 
@@ -111,14 +117,83 @@ async function handleImport(ctx: Context, user: User, jsonText: string): Promise
   }
 }
 
+/** Weekly stats, plus the AI summary when the flag is on. */
+async function sendReport(ctx: Context, user: User): Promise<void> {
+  const stats = await collectWeeklyStats(user);
+
+  const cats = Object.entries(stats.byCategory)
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => `• ${k}: ${(v / 60).toFixed(1)} h`)
+    .join('\n');
+
+  const daily = stats.dailyPercent
+    .map((d) => `• ${d.date}: ${d.percent}%`)
+    .join('\n');
+
+  const skips = Object.entries(stats.skipReasons)
+    .map(([k, v]) => `• ${k}: ${v}`)
+    .join('\n');
+
+  await ctx.reply(
+    [
+      `*Weekly report* (${stats.from} to ${stats.to})`,
+      '',
+      `Completed: *${stats.totalDoneHours}* of ${stats.totalPlannedHours} hours`,
+      cats ? `\n*By category*\n${cats}` : '',
+      daily ? `\n*Daily completion*\n${daily}` : '',
+      skips ? `\n*Skip reasons*\n${skips}` : '',
+    ].filter(Boolean).join('\n'),
+    { parse_mode: 'Markdown' },
+  );
+
+  if (!env.AI_ENABLED) return;
+
+  const { ai } = await weeklyReport(user);
+  await ctx.reply(
+    [
+      ai.summary,
+      ai.wins.length ? `\n✅ *Going well*\n${ai.wins.map((w) => `• ${w}`).join('\n')}` : '',
+      ai.problems.length ? `\n⚠️ *Problems*\n${ai.problems.map((w) => `• ${w}`).join('\n')}` : '',
+      ai.recommendations.length ? `\n🎯 *Recommendations*\n${ai.recommendations.map((w) => `• ${w}`).join('\n')}` : '',
+    ].filter(Boolean).join('\n'),
+    { parse_mode: 'Markdown' },
+  );
+
+  const patterns = await analyzeErrors(user);
+  if (patterns && patterns.patterns.length > 0) {
+    const txt = patterns.patterns
+      .map((p) => `• *${p.section}* - ${p.question_type} (${p.share_percent}%)\n  ${p.advice}`)
+      .join('\n');
+    await ctx.reply(`📕 *Mistake patterns*\n\n${txt}\n\n${patterns.summary}`, { parse_mode: 'Markdown' });
+  }
+  }
+
+/** Read-only view of the profile; edits go through /timezone and JSON. */
+async function sendSettings(ctx: Context, user: User): Promise<void> {
+  const streak = await computeStreak(user);
+  const goals = Object.entries(user.goals ?? {}).map(([k, v]) => `  ${k}: ${v}%`).join('\n') || '  not set';
+  await ctx.reply(
+    '*Settings*\n\n' +
+    `Name: ${user.first_name}\n` +
+    `Phone: ${user.phone}\n` +
+    `Timezone: ${user.timezone}\n` +
+    `Wake up: ${user.wake_time ?? 'not set'}\n` +
+    `Sleep: ${user.sleep_time ?? 'not set'}\n` +
+    `Notifications: ${user.notify_mode}\n` +
+    (streak > 1 ? `Streak: 🔥 ${streak} days\n` : '') +
+    `Goals:\n${goals}\n\n` +
+    'To change your timezone: `/timezone Asia/Tashkent`',
+    { parse_mode: 'Markdown' },
+  );
+  }
+
 export function registerCommands(bot: Bot): void {
   bot.command('start', async (ctx) => {
     const tgId = ctx.from?.id;
     if (!tgId) return;
     const user = await requireUser(tgId);
     if (user) {
-      await ctx.reply(T.loginOk(user.first_name), { parse_mode: 'Markdown' });
-      await ctx.reply(T.help, { parse_mode: 'Markdown' });
+      await ctx.reply(T.loginOk(user.first_name), { parse_mode: 'Markdown', reply_markup: mainMenu });
       return;
     }
     await startLogin(ctx);
@@ -130,11 +205,6 @@ export function registerCommands(bot: Bot): void {
 
   /** Two ways to get a schedule: let the AI draft it, or upload JSON. */
   bot.command('plan', guarded(async (ctx) => {
-    if (!env.AI_ENABLED) {
-      await ctx.reply(T.planIntroJsonOnly, { parse_mode: 'Markdown' });
-      await sendTemplate(ctx);
-      return;
-    }
     await ctx.reply(T.planIntro, { parse_mode: 'Markdown', reply_markup: planKeyboard() });
   }));
 
@@ -150,6 +220,15 @@ export function registerCommands(bot: Bot): void {
     const action = ctx.callbackQuery.data.slice('plan:'.length);
 
     if (action === 'json') {
+      await ctx.answerCallbackQuery();
+      await ctx.reply(T.formatHelp(CATEGORY_LIST), {
+        parse_mode: 'Markdown',
+        reply_markup: new InlineKeyboard().text('⬇️ Download template file', 'plan:template'),
+      });
+      return;
+    }
+
+    if (action === 'template') {
       await ctx.answerCallbackQuery();
       await sendTemplate(ctx);
       return;
@@ -197,55 +276,7 @@ export function registerCommands(bot: Bot): void {
     await showDay(ctx, user, arg);
   }));
 
-  bot.command('report', guarded(async (ctx, user) => {
-    const stats = await collectWeeklyStats(user);
-
-    const cats = Object.entries(stats.byCategory)
-      .sort((a, b) => b[1] - a[1])
-      .map(([k, v]) => `• ${k}: ${(v / 60).toFixed(1)} h`)
-      .join('\n');
-
-    const daily = stats.dailyPercent
-      .map((d) => `• ${d.date}: ${d.percent}%`)
-      .join('\n');
-
-    const skips = Object.entries(stats.skipReasons)
-      .map(([k, v]) => `• ${k}: ${v}`)
-      .join('\n');
-
-    await ctx.reply(
-      [
-        `*Weekly report* (${stats.from} to ${stats.to})`,
-        '',
-        `Completed: *${stats.totalDoneHours}* of ${stats.totalPlannedHours} hours`,
-        cats ? `\n*By category*\n${cats}` : '',
-        daily ? `\n*Daily completion*\n${daily}` : '',
-        skips ? `\n*Skip reasons*\n${skips}` : '',
-      ].filter(Boolean).join('\n'),
-      { parse_mode: 'Markdown' },
-    );
-
-    if (!env.AI_ENABLED) return;
-
-    const { ai } = await weeklyReport(user);
-    await ctx.reply(
-      [
-        ai.summary,
-        ai.wins.length ? `\n✅ *Going well*\n${ai.wins.map((w) => `• ${w}`).join('\n')}` : '',
-        ai.problems.length ? `\n⚠️ *Problems*\n${ai.problems.map((w) => `• ${w}`).join('\n')}` : '',
-        ai.recommendations.length ? `\n🎯 *Recommendations*\n${ai.recommendations.map((w) => `• ${w}`).join('\n')}` : '',
-      ].filter(Boolean).join('\n'),
-      { parse_mode: 'Markdown' },
-    );
-
-    const patterns = await analyzeErrors(user);
-    if (patterns && patterns.patterns.length > 0) {
-      const txt = patterns.patterns
-        .map((p) => `• *${p.section}* - ${p.question_type} (${p.share_percent}%)\n  ${p.advice}`)
-        .join('\n');
-      await ctx.reply(`📕 *Mistake patterns*\n\n${txt}\n\n${patterns.summary}`, { parse_mode: 'Markdown' });
-    }
-  }));
+  bot.command('report', guarded(sendReport));
 
   bot.command('mistake', guarded(async (ctx, user) => {
     const arg = commandArg(ctx);
@@ -279,21 +310,7 @@ export function registerCommands(bot: Bot): void {
     );
   }));
 
-  bot.command('settings', guarded(async (ctx, user) => {
-    const goals = Object.entries(user.goals ?? {}).map(([k, v]) => `  ${k}: ${v}%`).join('\n') || '  not set';
-    await ctx.reply(
-      '*Settings*\n\n' +
-      `Name: ${user.first_name}\n` +
-      `Phone: ${user.phone}\n` +
-      `Timezone: ${user.timezone}\n` +
-      `Wake up: ${user.wake_time ?? 'not set'}\n` +
-      `Sleep: ${user.sleep_time ?? 'not set'}\n` +
-      `Notifications: ${user.notify_mode}\n` +
-      `Goals:\n${goals}\n\n` +
-      'To change your timezone: `/timezone Asia/Tashkent`',
-      { parse_mode: 'Markdown' },
-    );
-  }));
+  bot.command('settings', guarded(sendSettings));
 
   bot.command('timezone', guarded(async (ctx, user) => {
     const tz = commandArg(ctx);
@@ -376,10 +393,34 @@ export function registerCommands(bot: Bot): void {
     await handleImport(ctx, user, await res.text());
   }));
 
-  /** Free text: pasted JSON is imported, anything else gets a short hint. */
+  /** Free text: menu buttons, pasted JSON, then the AI. */
   bot.on('message:text', guarded(async (ctx, user) => {
     const text = (ctx.message?.text ?? '').trim();
     if (!text || text.startsWith('/')) return;
+
+    // The bottom menu sends plain text, so map those labels to actions first.
+    switch (text) {
+      case MENU.today:
+        await showDay(ctx, user, todayISO(user.timezone));
+        return;
+      case MENU.tomorrow:
+        await showDay(ctx, user, addDaysISO(todayISO(user.timezone), 1, user.timezone));
+        return;
+      case MENU.plan:
+        await ctx.reply(T.planIntro, { parse_mode: 'Markdown', reply_markup: planKeyboard() });
+        return;
+      case MENU.report:
+        await sendReport(ctx, user);
+        return;
+      case MENU.settings:
+        await sendSettings(ctx, user);
+        return;
+      case MENU.help:
+        await ctx.reply(T.help, { parse_mode: 'Markdown', reply_markup: mainMenu });
+        return;
+      default:
+        break;
+    }
 
     if (text.startsWith('{') || text.startsWith('[')) {
       await ctx.replyWithChatAction('typing');

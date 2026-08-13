@@ -7,11 +7,48 @@ import { minutesBehind } from './recovery.js';
 import { scheduleDay } from '../queue/scheduler.js';
 import { sendMd } from '../bot/bot.js';
 import { recoveryKeyboard } from '../bot/keyboards.js';
+import { T } from '../bot/texts.js';
 import type { User } from '../types/db.js';
 
 async function activeUsers(): Promise<User[]> {
   const { data } = await db.from('users').select('*').eq('is_active', true).not('telegram_id', 'is', null);
   return (data ?? []) as User[];
+}
+
+/**
+ * A confirmation that is never answered should not sit "pending" forever.
+ * After a full day the block is closed as not done, which keeps the weekly
+ * numbers honest instead of quietly optimistic.
+ */
+async function closeStaleBlocks(user: User): Promise<void> {
+  const cutoff = addDaysISO(todayISO(user.timezone), -1, user.timezone);
+
+  const { data } = await db
+    .from('blocks')
+    .select('id, title, status, schedules!inner(user_id, date)')
+    .in('status', ['pending', 'active'])
+    .eq('schedules.user_id', user.id)
+    .lt('schedules.date', cutoff);
+
+  const stale = (data ?? []) as Array<{ id: string; title: string }>;
+  if (stale.length === 0) return;
+
+  for (const b of stale) {
+    await db.from('blocks')
+      .update({ status: 'skipped', actual_end: new Date().toISOString() })
+      .eq('id', b.id);
+  }
+
+  log.info('stale_blocks_closed', { userId: user.id, count: stale.length });
+
+  if (user.telegram_id && stale.length <= 3) {
+    for (const b of stale) await sendMd(user.telegram_id, T.autoMissed(b.title));
+  } else if (user.telegram_id) {
+    await sendMd(
+      user.telegram_id,
+      `❌ ${stale.length} blocks from earlier days were left unanswered, so I marked them as not done.`,
+    );
+  }
 }
 
 /** Runs every 10 minutes: recovery nudge + burnout guard. */
@@ -66,6 +103,8 @@ export async function hourlyTick(): Promise<void> {
           await sendMd(user.telegram_id, "📅 Tomorrow's schedule is ready from your template. See it with /tomorrow");
         }
       }
+
+      await closeStaleBlocks(user);
 
       if (await detectBurnout(user)) {
         await sendMd(
