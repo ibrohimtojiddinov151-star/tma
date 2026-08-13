@@ -271,6 +271,98 @@ bilan bir xil bo'ladi.
 
 ---
 
+## 13. Ikkinchi GitHub akkauntga ham push qilish
+
+Xuddi shu kodni ikkita hisobga yuborish mumkin. Bitta papka, ikkita manzil.
+
+### 13.1 Avval: ikkinchi hisobda repo yarating
+
+Ikkinchi akkauntga kiring va `github.com/new` dan `tma` nomli **Private** repo
+yarating. Ichini bo'sh qoldiring (README, .gitignore belgilamang).
+
+### 13.2 Bir mashinada ikkita hisob muammosi
+
+Windows Credential Manager `github.com` uchun **bitta** parolni saqlaydi. Shuning
+uchun ikkinchi hisobga push qilganda birinchisining ma'lumoti ishlatiladi va
+`403 Permission denied` chiqadi.
+
+Yechim — har repo uchun alohida kirish ma'lumoti saqlansin:
+
+```bash
+git config --global credential.useHttpPath true
+```
+
+Bu bir marta bajariladi. Shundan keyin git `github.com/TMB-king/tma` va
+`github.com/theanvarovich/tma` uchun ikki xil hisobni eslab qoladi.
+
+Qo'shimcha: remote manzilida foydalanuvchi nomini ko'rsating (`user@github.com`),
+shunda git qaysi hisob kerakligini so'ramasdan biladi.
+
+### 13.3 Variant A — alohida remote (tavsiya)
+
+Har biriga alohida nom beriladi, alohida push qilinadi:
+
+```bash
+git remote add backup https://theanvarovich@github.com/theanvarovich/tma.git
+
+git push origin main     # birinchi hisobga
+git push backup main     # ikkinchi hisobga
+```
+
+Tekshirish:
+
+```bash
+git remote -v
+```
+
+Afzalligi: har biriga alohida, xohlagan paytda yuborasiz. Masalan `origin` ga
+har kuni, `backup` ga haftada bir marta.
+
+### 13.4 Variant B — bitta buyruq bilan ikkalasiga
+
+`origin` ga ikkita push manzili biriktiriladi:
+
+```bash
+git remote set-url --add --push origin https://TMB-king@github.com/TMB-king/tma.git
+git remote set-url --add --push origin https://theanvarovich@github.com/theanvarovich/tma.git
+
+git push origin main     # ikkalasiga birdan ketadi
+```
+
+**Diqqat:** `--add --push` birinchi marta ishlatilganda standart push manzilini
+almashtiradi, shuning uchun **ikkala** manzilni ham qo'shish shart. Birinchisini
+qo'shishni unutsangiz, faqat ikkinchisiga ketadi.
+
+Tekshirish:
+
+```bash
+git remote -v
+# origin  https://...TMB-king/tma.git (fetch)
+# origin  https://...TMB-king/tma.git (push)
+# origin  https://...theanvarovich/tma.git (push)
+```
+
+`git pull` esa faqat birinchi (fetch) manzildan tortadi — bu normal.
+
+### 13.5 Agar maqsad hamkorlik bo'lsa
+
+Ikkinchi akkaunt boshqa odamniki bo'lsa va u ham kod ustida ishlasa, nusxa
+ko'chirishdan ko'ra uni **collaborator** qilib qo'shish to'g'riroq:
+
+Repo → **Settings** → **Collaborators** → **Add people** → uning username'i.
+
+Shunda ikkalangiz bitta repo bilan ishlaysiz, tarix bo'linib ketmaydi va
+o'zgarishlar bir joyda to'planadi.
+
+### 13.6 Railway va Vercel haqida
+
+Ikkinchi GitHub repo — bu faqat kodning nusxasi. U **avtomatik deploy
+qilmaydi**. Ikkinchi ishlaydigan nusxa kerak bo'lsa, u alohida bot tokeni talab
+qiladi: bitta tokenni ikkita serverda ishlatib bo'lmaydi, ikkinchisi
+birinchisining webhook'ini o'chirib yuboradi.
+
+---
+
 ## Keyingi qadam
 
 Kod GitHub'da bo'lgach, **[DEPLOY.md](DEPLOY.md)** ning 2-qadamiga o'ting:

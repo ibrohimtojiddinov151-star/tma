@@ -1,5 +1,5 @@
 import { GoogleGenAI } from '@google/genai';
-import type { ZodSchema } from 'zod';
+import type { ZodType, ZodTypeDef } from 'zod';
 import { env } from '../config/env.js';
 import { MAX_TOKENS, MODELS, THINKING, type ModelRole, type ThinkingLevel } from '../config/models.js';
 import { log } from './logger.js';
@@ -245,7 +245,11 @@ function extractJson(raw: string): unknown {
  * once, feeding the errors back to the model.
  */
 export async function askJson<T>(
-  schema: ZodSchema<T>,
+  // ZodSchema<T> forces input and output to be the same type, which breaks for
+  // any schema using .default(): its input has optional fields while its output
+  // has them filled in. Only the output type matters here, so the input side is
+  // left as `unknown`.
+  schema: ZodType<T, ZodTypeDef, unknown>,
   opts: AskOptions,
   extraCheck?: (value: T) => string[],
 ): Promise<{ value: T; meta: AskResult }> {

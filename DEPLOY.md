@@ -207,6 +207,7 @@ Railway rebuilds automatically. For the Mini App, `npx vercel --prod` from
 | Symptom | Cause and fix |
 |---|---|
 | Build fails on `npm install` | Check the Railway build log for the failing package. Node 22 is used in the image |
+| Build fails on `npm run build` with `error TS...` | A TypeScript error. The log lists `file(line,col)`. Reproduce locally with `npm run typecheck --workspace=server`, fix, commit, push |
 | `Healthcheck failed` | The server did not reach `/health`. Almost always a missing variable; the log names it |
 | Bot does not answer | `PUBLIC_URL` wrong or has a trailing slash, or a local instance is still polling |
 | `redis_unavailable` in logs | The Redis service was not added, or `REDIS_URL` is not linked to the service |
