@@ -104,21 +104,22 @@ export const T = {
   paused: '🔕 Notifications paused. Send /pause again to turn them back on.',
   resumed: '🔔 Notifications are back on.',
   help:
+    '*What this bot does*\n\n' +
+    '📅 *Today* - your day in one message. The three buttons under it always act ' +
+    'on the block you are on right now.\n\n' +
+    '🍅 *Pomodoro* - 25 min focus, 5 min break, long break after four rounds. ' +
+    'The timer runs in the bot and tells you when each phase ends.\n\n' +
+    '✨ *New plan* - let the AI draft a day, or upload your own JSON.\n\n' +
+    '📊 *Report* - the last seven days in numbers.\n\n' +
+    '🗄 *Archive* - finished days. Today never shows yesterday\'s list.\n\n' +
+    '*Automatic*\n' +
+    '• 5 minutes before a block: a heads-up\n' +
+    '• When it starts: the task, with a pomodoro button\n' +
+    '• 5 minutes before it ends: did you do it?\n' +
+    '• No answer for a day: marked as not done\n\n' +
     '*Commands*\n' +
-    '/plan - upload a schedule as a JSON file\n' +
-    '/format - JSON format and a template file\n' +
-    '/today - today\'s schedule\n' +
-    '/tomorrow - tomorrow\'s schedule\n' +
-    '/day 2026-08-20 - any date\n' +
-    '/report - weekly report\n' +
-    '/mistake - add an entry to your mistake log\n' +
-    '/vocab - review words that are due\n' +
-    '/settings - your settings\n' +
-    '/timezone - change your timezone\n' +
-    '/pause - pause notifications\n' +
-    '/logout - sign out\n\n' +
-    'The buttons at the bottom do the same thing without typing.\n' +
-    'You can also paste JSON directly into the chat instead of sending a file.',
+    '`/day 2026-08-20` any date · `/timezone` · `/nudges` motivational notes on and off · ' +
+    '`/pause` · `/format` JSON format · `/logout`',
 };
 
 export function renderBlock(b: Block): string {
@@ -133,28 +134,6 @@ export function renderSchedule(dateLabel: string, blocks: Block[], progressLine:
   return `*${dateLabel}*\n\n${blocks.map(renderBlock).join('\n')}\n\n${progressLine}`;
 }
 
-/**
- * Header for the checklist message. The blocks themselves live on the buttons,
- * so the text stays short: a long text plus 20 buttons will not fit on screen.
- */
-export function renderChecklistHeader(
-  dateLabel: string,
-  done: number,
-  total: number,
-  doneMin: number,
-  plannedMin: number,
-): string {
-  const percent = total === 0 ? 0 : Math.round((done / total) * 100);
-  const bars = Math.round(percent / 10);
-  return [
-    `*${dateLabel}*`,
-    '',
-    `${'█'.repeat(bars)}${'░'.repeat(10 - bars)} ${percent}%`,
-    `${done} of ${total} blocks · ${(doneMin / 60).toFixed(1)} / ${(plannedMin / 60).toFixed(1)} hours`,
-    '',
-    '_Tap a block to mark it done. Tap again to undo._',
-  ].join('\n');
-}
 
 export function renderDiff(diff: {
   remove: Array<{ start: string; end: string; title: string }>;

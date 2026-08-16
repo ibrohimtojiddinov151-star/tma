@@ -3,15 +3,17 @@ import { db } from '../lib/supabase.js';
 import { requireUser, resetSession } from '../lib/auth.js';
 import { startLogin } from './auth-flow.js';
 import {
-  MENU, appButton, checklistKeyboard, confirmKeyboard, mainMenu, planKeyboard,
-  vocabKeyboard, webAppAvailable,
+  MENU, appButton, confirmKeyboard, mainMenu, planKeyboard, vocabKeyboard, webAppAvailable,
 } from './keyboards.js';
-import { T, progressLine, renderChecklistHeader, renderDiff, renderSchedule } from './texts.js';
+import { sendDay } from './handlers/day.js';
+import { startPomodoro } from './handlers/pomodoro.js';
+import { T, progressLine, renderDiff, renderSchedule } from './texts.js';
 import { addDaysISO, dayLabel, todayISO } from '../lib/time.js';
-import { computeProgress, computeStreak, getSchedule } from '../services/schedules.js';
+import { computeProgress, computeStreak, getSchedulesInRange } from '../services/schedules.js';
 import { chat, generateSchedule, proposeChange } from '../services/planner.js';
 import { analyzeErrors, collectWeeklyStats, weeklyReport } from '../services/reports.js';
 import { dueCards } from '../services/vocab.js';
+import { setNudges } from '../services/nudges.js';
 import {
   CATEGORY_LIST, ImportError, TEMPLATE_JSON, importSchedules, parseJsonText,
 } from '../services/import.js';
@@ -45,25 +47,7 @@ function commandArg(ctx: Context): string {
   return ((ctx as unknown as { match?: string }).match ?? '').trim();
 }
 
-/** The day as one tappable checklist message. */
-async function showDay(ctx: Context, user: User, dateISO: string): Promise<void> {
-  const s = await getSchedule(user.id, dateISO);
-  const label = dayLabel(dateISO, user.timezone);
-  if (!s || s.blocks.length === 0) {
-    await ctx.reply(T.noSchedule(label), { reply_markup: mainMenu });
-    return;
-  }
-
-  const p = computeProgress(s.blocks);
-  const done = s.blocks.filter((b) => b.status === 'done').length;
-
-  await ctx.reply(
-    renderChecklistHeader(label, done, s.blocks.length, p.doneMinutes, p.plannedMinutes),
-    { parse_mode: 'Markdown', reply_markup: checklistKeyboard(s.blocks, dateISO) },
-  );
-
-  if (s.rationale) await ctx.reply(`💡 ${s.rationale}`);
-}
+const showDay = sendDay;
 
 /** Send the blank template as a downloadable file plus the field reference. */
 async function sendTemplate(ctx: Context): Promise<void> {
@@ -168,6 +152,31 @@ async function sendReport(ctx: Context, user: User): Promise<void> {
   }
   }
 
+/** Past days, newest first. Keeps "today" free of yesterday's leftovers. */
+async function sendArchive(ctx: Context, user: User): Promise<void> {
+  const today = todayISO(user.timezone);
+  const from = addDaysISO(today, -14, user.timezone);
+  const past = (await getSchedulesInRange(user.id, from, addDaysISO(today, -1, user.timezone)))
+    .sort((a, b) => (a.date < b.date ? 1 : -1));
+
+  if (past.length === 0) {
+    await ctx.reply('🗄 Nothing archived yet. Finished days land here.');
+    return;
+  }
+
+  const lines = past.map((s) => {
+    const p = computeProgress(s.blocks);
+    const icon = p.donePercent >= 80 ? '🟢' : p.donePercent >= 40 ? '🟡' : '🔴';
+    return `${icon} \`${s.date}\`  ${p.donePercent}%  ·  ${(p.doneMinutes / 60).toFixed(1)}h`;
+  });
+
+  await ctx.reply(
+    `🗄 *Archive* · last ${past.length} days\n\n${lines.join('\n')}\n\n` +
+    'Open any of them with `/day 2026-08-12`.',
+    { parse_mode: 'Markdown' },
+  );
+}
+
 /** Read-only view of the profile; edits go through /timezone and JSON. */
 async function sendSettings(ctx: Context, user: User): Promise<void> {
   const streak = await computeStreak(user);
@@ -254,6 +263,20 @@ export function registerCommands(bot: Bot): void {
       }
     }
   });
+
+  bot.command('pomodoro', guarded(async (ctx, user) => {
+    await startPomodoro(ctx, user, null);
+  }));
+
+  bot.command('archive', guarded(sendArchive));
+
+  bot.command('nudges', guarded(async (ctx, user) => {
+    const next = !user.nudges_enabled;
+    await setNudges(user.id, next);
+    await ctx.reply(next
+      ? '💬 Motivational notes are on. A short one lands in the morning, at midday and in the evening.'
+      : '🔕 Motivational notes are off.');
+  }));
 
   bot.command('format', guarded(async (ctx) => {
     await sendTemplate(ctx);
@@ -415,8 +438,11 @@ export function registerCommands(bot: Bot): void {
       case MENU.settings:
         await sendSettings(ctx, user);
         return;
-      case MENU.help:
-        await ctx.reply(T.help, { parse_mode: 'Markdown', reply_markup: mainMenu });
+      case MENU.pomodoro:
+        await startPomodoro(ctx, user, null);
+        return;
+      case MENU.archive:
+        await sendArchive(ctx, user);
         return;
       default:
         break;

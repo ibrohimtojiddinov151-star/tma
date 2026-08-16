@@ -8,8 +8,11 @@ import { getBlock, setBlockStatus } from '../services/schedules.js';
 import { dueCards } from '../services/vocab.js';
 import { getUserById } from '../lib/auth.js';
 import { callProvider } from '../services/call-provider.js';
-import { blockStartKeyboard, doneKeyboard, wakeKeyboard } from '../bot/keyboards.js';
-import { CATEGORY_EMOJI, CATEGORY_LABEL, T } from '../bot/texts.js';
+import { claimNudge } from '../services/nudges.js';
+import { finishPhase } from '../bot/handlers/pomodoro.js';
+import { blockStartedKeyboard, doneKeyboard, wakeKeyboard } from '../bot/keyboards.js';
+import { CATEGORY_EMOJI } from '../bot/view.js';
+import { T } from '../bot/texts.js';
 import { blockMinutes, hhmm, nowIn } from '../lib/time.js';
 
 async function isPaused(userId: string): Promise<boolean> {
@@ -38,8 +41,27 @@ export function startNotificationWorker(): Worker<NotifyJob> | null {
     NOTIF_QUEUE,
     async (job) => {
       const data = job.data;
+
+      // Pomodoro alarms are not schedule reminders, so they ignore /pause.
+      if (data.type === 'pomodoro' && data.sessionId) {
+        const user = await getUserById(data.userId);
+        if (user) await finishPhase(user, data.sessionId);
+        await markSent(job.id);
+        return;
+      }
+
       if (await isPaused(data.userId)) {
         log.info('notify_skipped_paused', { userId: data.userId });
+        return;
+      }
+
+      if (data.type === 'nudge' && data.slot) {
+        const user = await getUserById(data.userId);
+        if (user) {
+          const line = await claimNudge(user, data.slot as 'morning' | 'midday' | 'evening');
+          if (line) await sendMd(data.telegramId, line);
+        }
+        await markSent(job.id);
         return;
       }
 
@@ -55,34 +77,38 @@ export function startNotificationWorker(): Worker<NotifyJob> | null {
       if (block.status === 'done' || block.status === 'skipped') return;
 
       const emoji = CATEGORY_EMOJI[block.category] ?? '•';
-      const label = CATEGORY_LABEL[block.category] ?? block.category;
       const mins = blockMinutes(hhmm(block.start_time), hhmm(block.end_time));
 
       if (data.type === 'pre') {
-        await sendMd(data.telegramId, `⏰ In 5 minutes: ${emoji} *${block.title}* (${Math.round(mins / 60 * 10) / 10} h)`);
+        await sendMd(
+          data.telegramId,
+          `⏰ In 5 minutes\n\n${emoji} *${block.title}*\n` +
+          `🕒 ${hhmm(block.start_time)}-${hhmm(block.end_time)} · ${mins} min`,
+        );
       }
 
+      // Every task announces itself the moment it starts, timer one tap away.
       if (data.type === 'start') {
         await setBlockStatus(block.id, 'active');
         await sendMd(
           data.telegramId,
-          `${emoji} *${block.title}* starts now.\n_${label} · ${hhmm(block.start_time)}-${hhmm(block.end_time)}_`,
-          { reply_markup: blockStartKeyboard(block.id) },
+          `▶️ *Starting now*\n\n${emoji} *${block.title}*\n` +
+          `🕒 ${hhmm(block.start_time)}-${hhmm(block.end_time)} · ${mins} min` +
+          (block.notes ? `\n\n_${block.notes}_` : ''),
+          { reply_markup: blockStartedKeyboard(block.id) },
         );
 
-        // Make commute time useful: push vocab cards automatically.
         if (block.category === 'commute') {
           const owner = await getUserById(data.userId);
           const cards = owner ? await dueCards(owner, 5) : [];
           if (cards.length > 0) {
-            const list = cards.map((c) => `• *${c.word}* — ${c.meaning ?? ''}`).join('\n');
-            await sendMd(data.telegramId, `🚌 Commute time. Words to review:\n\n${list}\n\nSend /vocab for a full session.`);
+            const list = cards.map((c) => `• *${c.word}* - ${c.meaning ?? ''}`).join('\n');
+            await sendMd(data.telegramId, `🚌 Commute time. Words to review:\n\n${list}`);
           }
         }
       }
 
       // Asked 5 minutes before the block ends, while the work is still fresh.
-      // The buttons stay live until answered; daily-cron closes stale ones.
       if (data.type === 'confirm') {
         const owner = await getUserById(data.userId);
         const tz = owner?.timezone ?? 'Asia/Tashkent';
@@ -110,7 +136,7 @@ export function startNotificationWorker(): Worker<NotifyJob> | null {
   return worker;
 }
 
-/** Variant A escalation — Telegram-only wake-up, free, up to 5 pings. */
+/** Telegram-only wake-up escalation: up to 5 pings until "I'm up" is tapped. */
 async function handleWake(data: NotifyJob): Promise<void> {
   const step = data.step ?? 1;
   const user = await getUserById(data.userId);
@@ -131,9 +157,11 @@ async function handleWake(data: NotifyJob): Promise<void> {
 
   if (step === 3) {
     try {
-      await bot.api.sendVoice(data.telegramId, 'https://raw.githubusercontent.com/anars/blank-audio/master/1-second-of-silence.mp3', {
-        caption: '⏰ Time to get up!',
-      });
+      await bot.api.sendVoice(
+        data.telegramId,
+        'https://raw.githubusercontent.com/anars/blank-audio/master/1-second-of-silence.mp3',
+        { caption: '⏰ Time to get up!' },
+      );
     } catch (e) {
       log.warn('wake_voice_failed', { error: String(e) });
     }
@@ -146,4 +174,3 @@ async function handleWake(data: NotifyJob): Promise<void> {
 
   if (step < 5) await scheduleWakeEscalation(data, step + 1);
 }
-

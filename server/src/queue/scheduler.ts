@@ -112,6 +112,23 @@ export async function scheduleWakeEscalation(job: NotifyJob, step: number): Prom
   await enqueue({ ...job, type: 'wake', step }, fireAt, `wake:${job.userId}:${job.dateISO}:${step}`);
 }
 
+/** Pomodoro phases are queue jobs too, so a restart does not lose the timer. */
+export async function enqueuePomodoro(user: User, sessionId: string, endsAtMs: number): Promise<void> {
+  if (!user.telegram_id) return;
+  await enqueue(
+    { type: 'pomodoro', userId: user.id, telegramId: user.telegram_id, sessionId },
+    endsAtMs,
+    `pom:${sessionId}`,
+  );
+}
+
+export async function cancelPomodoro(sessionId: string): Promise<void> {
+  const q = getQueue();
+  if (!q) return;
+  const job = await q.getJob(`pom:${sessionId}`);
+  if (job) await job.remove().catch(() => undefined);
+}
+
 /** "Still working" pushes the confirmation question back by a few minutes. */
 export async function snoozeConfirm(job: NotifyJob, minutes: number): Promise<void> {
   await enqueue(

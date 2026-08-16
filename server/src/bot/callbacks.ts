@@ -1,15 +1,17 @@
 import type { Bot } from 'grammy';
 import { db } from '../lib/supabase.js';
 import { requireUser } from '../lib/auth.js';
-import { getBlock, getSchedule, setBlockStatus, setSkipReason } from '../services/schedules.js';
+import { getBlock, setBlockStatus, setSkipReason } from '../services/schedules.js';
 import { acceptPendingChange, rejectPendingChange } from '../services/planner.js';
 import { rebuildRestOfDay } from '../services/recovery.js';
 import { reviewCard, dueCards } from '../services/vocab.js';
-import { scheduleDay, snoozeBlock, snoozeConfirm } from '../queue/scheduler.js';
-import { checklistKeyboard, skipReasonKeyboard, vocabKeyboard } from './keyboards.js';
-import { T, progressLine, renderChecklistHeader, renderSchedule } from './texts.js';
+import { scheduleDay, snoozeConfirm } from '../queue/scheduler.js';
+import { skipReasonKeyboard, vocabKeyboard } from './keyboards.js';
+import { T, progressLine, renderSchedule } from './texts.js';
+import { markBlock, refreshDay, showBlockList } from './handlers/day.js';
+import { skipPhase, startPomodoro, stopPomodoro } from './handlers/pomodoro.js';
 import { computeProgress } from '../services/schedules.js';
-import { dayLabel, todayISO } from '../lib/time.js';
+import { dayLabel } from '../lib/time.js';
 import { log } from '../lib/logger.js';
 import type { SkipReason } from '../types/db.js';
 
@@ -27,35 +29,70 @@ export function registerCallbacks(bot: Bot): void {
     const kind = parts[0];
 
     try {
-      // ---- checklist row tapped: toggle and redraw the same message ----
-      if (kind === 'chk') {
-        const blockId = parts[1] as string;
-        const dateISO = parts[2] as string;
+      // ---- day view: the three buttons under the schedule ----
+      if (kind === 't') {
+        const action = parts[1];
+        const arg = parts[2] as string;
 
-        const block = await getBlock(blockId);
-        if (!block) {
-          await ctx.answerCallbackQuery({ text: 'That block no longer exists', show_alert: true });
+        if (action === 'refresh') {
+          await ctx.answerCallbackQuery();
+          await refreshDay(ctx, user, arg);
           return;
         }
 
-        const next = block.status === 'done' ? 'pending' : 'done';
-        await setBlockStatus(blockId, next);
-        await ctx.answerCallbackQuery({ text: next === 'done' ? 'Done ✅' : 'Unmarked' });
+        if (action === 'list') {
+          await ctx.answerCallbackQuery();
+          await showBlockList(ctx, user, arg);
+          return;
+        }
 
-        const schedule = await getSchedule(user.id, dateISO);
-        if (!schedule) return;
+        if (action === 'toggle') {
+          const block = await getBlock(arg);
+          if (!block) {
+            await ctx.answerCallbackQuery({ text: 'That block is gone', show_alert: true });
+            return;
+          }
+          const next = block.status === 'done' ? 'pending' : 'done';
+          await setBlockStatus(arg, next);
+          await ctx.answerCallbackQuery({ text: next === 'done' ? 'Done' : 'Reopened' });
 
-        const p = computeProgress(schedule.blocks);
-        const done = schedule.blocks.filter((b) => b.status === 'done').length;
+          const { data } = await db.from('schedules').select('date')
+            .eq('id', block.schedule_id).maybeSingle();
+          const dateISO = (data as { date?: string } | null)?.date;
+          if (dateISO) await showBlockList(ctx, user, dateISO);
+          return;
+        }
 
-        await ctx.editMessageText(
-          renderChecklistHeader(
-            dayLabel(dateISO, user.timezone),
-            done, schedule.blocks.length, p.doneMinutes, p.plannedMinutes,
-          ),
-          { parse_mode: 'Markdown', reply_markup: checklistKeyboard(schedule.blocks, dateISO) },
-        ).catch(() => undefined);
-        return;
+        if (action === 'done' || action === 'skip') {
+          await ctx.answerCallbackQuery({ text: action === 'done' ? 'Done ✅' : 'Skipped' });
+          await markBlock(ctx, user, arg, action === 'done' ? 'done' : 'skipped');
+          if (action === 'skip') {
+            await ctx.reply('What got in the way?', { reply_markup: skipReasonKeyboard(arg) });
+          }
+          return;
+        }
+      }
+
+      // ---- pomodoro ----
+      if (kind === 'pom') {
+        const action = parts[1];
+        const arg = parts[2] as string;
+
+        if (action === 'start') {
+          await ctx.answerCallbackQuery({ text: 'Timer started 🍅' });
+          await startPomodoro(ctx, user, arg || null);
+          return;
+        }
+        if (action === 'stop') {
+          await ctx.answerCallbackQuery({ text: 'Stopped' });
+          await stopPomodoro(ctx, user);
+          return;
+        }
+        if (action === 'skip') {
+          await ctx.answerCallbackQuery({ text: 'Next phase' });
+          await skipPhase(ctx, user);
+          return;
+        }
       }
 
       // ---- "did you do it?" answered ----
@@ -64,10 +101,7 @@ export function registerCallbacks(bot: Bot): void {
         const blockId = parts[2] as string;
 
         if (action === 'later') {
-          const block = await getBlock(blockId);
-          if (block) {
-            await snoozeConfirm({ type: 'confirm', userId: user.id, telegramId: tgId, blockId }, 15);
-          }
+          await snoozeConfirm({ type: 'confirm', userId: user.id, telegramId: tgId, blockId }, 15);
           await ctx.answerCallbackQuery({ text: T.confirmLater });
           return;
         }
@@ -81,53 +115,6 @@ export function registerCallbacks(bot: Bot): void {
           await ctx.reply('What got in the way?', { reply_markup: skipReasonKeyboard(blockId) });
         }
         return;
-      }
-
-      // ---- block lifecycle ----
-      if (kind === 'blk') {
-        const action = parts[1];
-        const blockId = parts[2] as string;
-
-        if (action === 'start') {
-          await setBlockStatus(blockId, 'active');
-          await ctx.answerCallbackQuery({ text: "Started. You've got this 💪" });
-          await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => undefined);
-          return;
-        }
-
-        if (action === 'skip') {
-          await setBlockStatus(blockId, 'skipped');
-          await ctx.answerCallbackQuery({ text: 'Skipped' });
-          await ctx.reply('What got in the way?', { reply_markup: skipReasonKeyboard(blockId) });
-          return;
-        }
-
-        if (action === 'snooze') {
-          const block = await getBlock(blockId);
-          if (block) {
-            await snoozeBlock(
-              { type: 'start', userId: user.id, telegramId: tgId, blockId },
-              10,
-            );
-          }
-          await ctx.answerCallbackQuery({ text: "I'll remind you in 10 minutes ⏰" });
-          return;
-        }
-
-        if (action === 'focus') {
-          const rating = Number(parts[3]);
-          await setBlockStatus(blockId, 'done', { focus_rating: rating });
-          await ctx.answerCallbackQuery({ text: `Saved: ${rating}/5 ✅` });
-          await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => undefined);
-
-          const today = todayISO(user.timezone);
-          const s = await getSchedule(user.id, today);
-          if (s) {
-            const p = computeProgress(s.blocks);
-            await ctx.reply(`📊 Today: ${(p.doneMinutes / 60).toFixed(1)} / ${(p.plannedMinutes / 60).toFixed(1)} hours (${p.donePercent}%)`);
-          }
-          return;
-        }
       }
 
       // ---- skip reason ----

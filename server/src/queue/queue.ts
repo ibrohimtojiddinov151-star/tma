@@ -6,13 +6,17 @@ import { log } from '../lib/logger.js';
 export const NOTIF_QUEUE = 'tma-notifications';
 
 export interface NotifyJob {
-  type: 'pre' | 'start' | 'confirm' | 'end' | 'wake' | 'escalation';
+  type: 'pre' | 'start' | 'confirm' | 'end' | 'wake' | 'escalation' | 'pomodoro' | 'nudge';
   userId: string;
   telegramId: number;
   blockId?: string;
   /** escalation step 1..5 */
   step?: number;
   dateISO?: string;
+  /** set for pomodoro phase alarms */
+  sessionId?: string;
+  /** set for motivational nudges */
+  slot?: string;
 }
 
 let connection: IORedis | null = null;

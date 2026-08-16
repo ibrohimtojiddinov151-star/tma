@@ -8,11 +8,27 @@ import { scheduleDay } from '../queue/scheduler.js';
 import { sendMd } from '../bot/bot.js';
 import { recoveryKeyboard } from '../bot/keyboards.js';
 import { T } from '../bot/texts.js';
+import { claimNudge } from './nudges.js';
 import type { User } from '../types/db.js';
 
 async function activeUsers(): Promise<User[]> {
   const { data } = await db.from('users').select('*').eq('is_active', true).not('telegram_id', 'is', null);
   return (data ?? []) as User[];
+}
+
+/** Days older than today move to 'archived' so "today" is never a stale list. */
+async function archivePastDays(user: User): Promise<void> {
+  const today = todayISO(user.timezone);
+  const { data } = await db
+    .from('schedules')
+    .update({ status: 'archived' })
+    .eq('user_id', user.id)
+    .lt('date', today)
+    .in('status', ['draft', 'active', 'completed'])
+    .select('id');
+
+  const count = (data ?? []).length;
+  if (count > 0) log.info('days_archived', { userId: user.id, count });
 }
 
 /**
@@ -70,6 +86,8 @@ export async function tenMinuteTick(): Promise<void> {
           `⚠️ You are *${Math.round(behind / 60)} hours* behind schedule.\n\nWant me to replan the rest of the day?`,
           { reply_markup: recoveryKeyboard() },
         );
+        const line = await claimNudge(user, 'behind');
+        if (line) await sendMd(user.telegram_id, line);
       }
     }
   }
@@ -82,16 +100,30 @@ export async function hourlyTick(): Promise<void> {
     const now = nowIn(user.timezone);
     const today = todayISO(user.timezone);
 
+    // Motivational notes at three natural moments. claimNudge keeps them to
+    // one per slot per day even if the tick runs more than once in an hour.
+    const slot = now.hour === 7 ? 'morning' : now.hour === 13 ? 'midday' : now.hour === 19 ? 'evening' : null;
+    if (slot) {
+      const line = await claimNudge(user, slot);
+      if (line) await sendMd(user.telegram_id, line);
+    }
+
     // 23:00 — close today, make sure tomorrow has a plan.
     if (now.hour === 23) {
       const s = await getSchedule(user.id, today);
       if (s) {
         await setScheduleStatus(s.id, 'completed');
+        await archivePastDays(user);
         const p = computeProgress(s.blocks);
         const msg = p.donePercent >= 80
-          ? `🌙 You completed *${p.donePercent}%* today. Strong work.`
+          ? `🌙 You completed *${p.donePercent}%* today.`
           : `🌙 You completed ${p.donePercent}% today. Fresh start tomorrow.`;
         await sendMd(user.telegram_id, msg);
+
+        if (p.donePercent >= 80) {
+          const line = await claimNudge(user, 'strong_day');
+          if (line) await sendMd(user.telegram_id, line);
+        }
       }
 
       const tomorrow = addDaysISO(today, 1, user.timezone);

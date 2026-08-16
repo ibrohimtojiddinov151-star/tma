@@ -1,6 +1,6 @@
 export type NotifyMode = 'message' | 'voice' | 'call';
 export type BlockStatus = 'pending' | 'active' | 'done' | 'skipped';
-export type ScheduleStatus = 'draft' | 'active' | 'completed';
+export type ScheduleStatus = 'draft' | 'active' | 'completed' | 'archived';
 export type SkipReason = 'tired' | 'distracted' | 'other_task' | 'too_long';
 
 export type Category =
@@ -25,6 +25,25 @@ export interface User {
   onboarded: boolean;
   last_login_at: string | null;
   created_at: string;
+  pomodoro_focus: number;
+  pomodoro_short: number;
+  pomodoro_long: number;
+  nudges_enabled: boolean;
+}
+
+export type PomodoroPhase = 'focus' | 'short_break' | 'long_break';
+
+export interface PomodoroSession {
+  id: string;
+  user_id: string;
+  block_id: string | null;
+  phase: PomodoroPhase;
+  round: number;
+  minutes: number;
+  started_at: string;
+  ends_at: string;
+  status: 'running' | 'done' | 'stopped';
+  message_id: number | null;
 }
 
 export type BotSessionState = 'awaiting_phone' | 'awaiting_password' | 'authenticated' | 'locked';

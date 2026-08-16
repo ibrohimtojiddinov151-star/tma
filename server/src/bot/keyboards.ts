@@ -1,6 +1,4 @@
 import { InlineKeyboard, Keyboard } from 'grammy';
-import type { Block } from '../types/db.js';
-import { hhmm } from '../lib/time.js';
 import { env } from '../config/env.js';
 
 /**
@@ -9,17 +7,19 @@ import { env } from '../config/env.js';
  */
 export const MENU = {
   today: '📅 Today',
+  pomodoro: '🍅 Pomodoro',
   tomorrow: '📆 Tomorrow',
   plan: '✨ New plan',
   report: '📊 Report',
+  archive: '🗄 Archive',
   settings: '⚙️ Settings',
-  help: '❓ Help',
 } as const;
 
 export const mainMenu = new Keyboard()
-  .text(MENU.today).text(MENU.tomorrow).row()
-  .text(MENU.plan).text(MENU.report).row()
-  .text(MENU.settings).text(MENU.help)
+  .text(MENU.today).text(MENU.pomodoro).row()
+  .text(MENU.tomorrow).text(MENU.plan).row()
+  .text(MENU.report).text(MENU.archive).row()
+  .text(MENU.settings)
   .resized()
   .persistent();
 
@@ -53,23 +53,6 @@ export function planKeyboard(): InlineKeyboard {
     .text('📄 Upload my own JSON', 'plan:json');
 }
 
-/**
- * The day rendered as a tappable checklist.
- *
- * Telegram's native checklists (sendChecklist) only work through a Business
- * connection, so this is the equivalent built from inline buttons: one row per
- * block, tapping a row toggles it and the same message is edited in place.
- */
-export function checklistKeyboard(blocks: Block[], dateISO: string): InlineKeyboard {
-  const kb = new InlineKeyboard();
-  for (const b of blocks.slice(0, 40)) {
-    const mark = b.status === 'done' ? '✅' : b.status === 'skipped' ? '❌' : '⬜';
-    const label = `${mark} ${hhmm(b.start_time)} ${b.title}`.slice(0, 60);
-    kb.text(label, `chk:${b.id}:${dateISO}`).row();
-  }
-  return kb;
-}
-
 /** Sent 5 minutes before a block ends. Stays tappable until answered. */
 export function doneKeyboard(blockId: string): InlineKeyboard {
   return new InlineKeyboard()
@@ -79,22 +62,15 @@ export function doneKeyboard(blockId: string): InlineKeyboard {
     .text('⏳ Still working', `cfm:later:${blockId}`);
 }
 
-export function blockStartKeyboard(blockId: string): InlineKeyboard {
+/** Shown when a block starts, so the timer is one tap away. */
+export function blockStartedKeyboard(blockId: string): InlineKeyboard {
   return new InlineKeyboard()
-    .text('▶️ Started', `blk:start:${blockId}`)
-    .text('⏭ Skip', `blk:skip:${blockId}`)
+    .text('🍅 Start pomodoro', `pom:start:${blockId}`)
     .row()
-    .text('⏰ Remind in 10 min', `blk:snooze:${blockId}`);
+    .text('✅ Done', `t:done:${blockId}`)
+    .text('⏭ Skip', `t:skip:${blockId}`);
 }
 
-export function blockEndKeyboard(blockId: string): InlineKeyboard {
-  return new InlineKeyboard()
-    .text('1', `blk:focus:${blockId}:1`)
-    .text('2', `blk:focus:${blockId}:2`)
-    .text('3', `blk:focus:${blockId}:3`)
-    .text('4', `blk:focus:${blockId}:4`)
-    .text('5', `blk:focus:${blockId}:5`);
-}
 
 export function skipReasonKeyboard(blockId: string): InlineKeyboard {
   return new InlineKeyboard()
